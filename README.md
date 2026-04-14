@@ -44,6 +44,16 @@
 * `cuda/_wrapper.py`: 파이토치 `autograd.Function`을 상속한 메모리 연속성(Contiguous) 보장 커널 인터페이스.
 * `rayrope_cuda.py`: 기존 모델 구조를 대체하여 최적화된 커널을 매끄럽게 연결하는 래퍼(Wrapper) 모듈.
 
+---
+
+> ⚠️ **지원 설정 안내 (Supported Configurations)**
+> 
+> 현재 통합된 CUDA 커널은 RayRoPE의 **기본(Default) 파라미터 설정**에 맞추어 하드코딩 및 최적화되어 있습니다. 다른 옵션을 사용할 경우 호환되지 않을 수 있습니다.
+> * `pos_enc_type` = `'d_pj+0_3d'`
+> * `num_rays_per_patch` = `3`
+> * `depth_type` = `'predict_dsig'`
+> * `denc_type` = `'d'`
+
 <br>
 <br>
 
@@ -94,3 +104,13 @@ The following metrics demonstrate the performance improvements measured during b
 * `cuda/csrc/rayrope_geometry_d_pj__0_3d.cu`: 3D geometric coordinate transformation kernel.
 * `cuda/_wrapper.py`: PyTorch `autograd.Function` wrapper ensuring memory contiguity.
 * `rayrope_cuda.py`: Python wrapper module cleanly replacing the original model structure with the optimized kernels.
+
+---
+
+> ⚠️ **Supported Configurations**
+> 
+> Please note that the current custom CUDA kernels are specifically hardcoded and optimized for the **default parameter settings** of RayRoPE. Using other options may result in incompatibility.
+> * `pos_enc_type` = `'d_pj+0_3d'`
+> * `num_rays_per_patch` = `3`
+> * `depth_type` = `'predict_dsig'`
+> * `denc_type` = `'d'`
