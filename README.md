@@ -46,6 +46,7 @@
 
 ---
 
+## 참고 사항 (Important Notes)
 > ⚠️ **지원 설정 안내 (Supported Configurations)**
 > 
 > 현재 통합된 CUDA 커널은 RayRoPE의 **기본(Default) 파라미터 설정**에 맞추어 하드코딩 및 최적화되어 있습니다. 다른 옵션을 사용할 경우 호환되지 않을 수 있습니다.
@@ -107,6 +108,7 @@ The following metrics demonstrate the performance improvements measured during b
 
 ---
 
+## Important Notes
 > ⚠️ **Supported Configurations**
 > 
 > Please note that the current custom CUDA kernels are specifically hardcoded and optimized for the **default parameter settings** of RayRoPE. Using other options may result in incompatibility.
