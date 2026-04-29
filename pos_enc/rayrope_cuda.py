@@ -20,7 +20,8 @@ class RayRoPE_DotProductAttention_CUDA(torch.nn.Module):
     Self-attention with RayRoPE positional encoding for multi-view patches.
     """
 
-    def __init__(self, head_dim: int, 
+    def __init__(self,
+                 head_dim: int, 
                  patches_x: int,
                  patches_y: int,
                  image_width: int,
@@ -255,7 +256,7 @@ def _invert_SE3(transforms: torch.Tensor) -> torch.Tensor:
 def _lift_K(Ks: torch.Tensor) -> torch.Tensor:
     """Lift 3x3 matrices to homogeneous 4x4 matrices."""
     assert Ks.shape[-2:] == (3, 3)
-    out = torch.zeros(Ks.shape[:-2] + (4, 4), device=Ks.device)
+    out = torch.zeros(Ks.shape[:-2] + (4, 4), device=Ks.device, dtype=Ks.dtype)
     out[..., :3, :3] = Ks
     out[..., 3, 3] = 1.0
     return out

@@ -481,6 +481,7 @@ def _get_point_coords(
     ) -> torch.Tensor:
     # return the pixel space 3d homogenous coordinates
     device = P_inv.device
+    dtype = P_inv.dtype
     batches = P_inv.shape[0]
     num_cameras = P_inv.shape[1]
     num_patches = patches_x * patches_y
@@ -495,7 +496,7 @@ def _get_point_coords(
     for offset in offsets:
         u = ((u_base + offset[0]) / patches_x) - 0.5 #Since we assume normalized K where px=py=0
         v = ((v_base + offset[1]) / patches_y) - 0.5
-        coords.append(torch.stack([u, v], dim=-1).reshape(-1, 2))  # [num_patches, 2]
+        coords.append(torch.stack([u, v], dim=-1).reshape(-1, 2).to(dtype))  # [num_patches, 2]
     coords = torch.stack(coords, dim=1) # (num_patches, num_rays_per_patch, 2)
     # assert coords.shape == (num_patches, num_rays_per_patch, 2)
     coords = coords.view(1, 1, num_patches, num_rays_per_patch, 2).expand(batches, num_cameras, -1, -1, -1) 
@@ -761,7 +762,7 @@ def _invert_SE3(transforms: torch.Tensor) -> torch.Tensor:
 def _lift_K(Ks: torch.Tensor) -> torch.Tensor:
     """Lift 3x3 matrices to homogeneous 4x4 matrices."""
     assert Ks.shape[-2:] == (3, 3)
-    out = torch.zeros(Ks.shape[:-2] + (4, 4), device=Ks.device)
+    out = torch.zeros(Ks.shape[:-2] + (4, 4), device=Ks.device, dtype=Ks.dtype)
     out[..., :3, :3] = Ks
     out[..., 3, 3] = 1.0
     return out

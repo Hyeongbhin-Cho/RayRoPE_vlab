@@ -18,21 +18,20 @@ namespace cg = cooperative_groups;
 
 // 4x4 Matrix and 4x1 Vector Mutiply
 template <typename scalar_t>
-__device__ __forceinline__ void matmul_4x4_4x1(const scalar_t* mat, const scalar_t* vec, scalar_t* out) {
+__device__ __forceinline__ void matmul_4x4_4x1(const scalar_t* mat, const float* vec, float* out) {
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        out[i] = mat[i * 4 + 0] * vec[0] + 
-                 mat[i * 4 + 1] * vec[1] + 
-                 mat[i * 4 + 2] * vec[2] + 
-                 mat[i * 4 + 3] * vec[3];
+        out[i] = static_cast<float>(mat[i * 4 + 0]) * vec[0] + 
+                 static_cast<float>(mat[i * 4 + 1]) * vec[1] + 
+                 static_cast<float>(mat[i * 4 + 2]) * vec[2] + 
+                 static_cast<float>(mat[i * 4 + 3]) * vec[3];
     }
 }
 
 // Inverse L2 Norm
-template <typename scalar_t>
-__device__ __forceinline__ void norm_inv_3(const scalar_t* vec, scalar_t* out) {
-    scalar_t norm_sq = vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2] + 1e-9f;
-    *out = rsqrtf(static_cast<float>(norm_sq));
+__device__ __forceinline__ void norm_inv_3(const float* vec, float* out) {
+    float norm_sq = vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2] + 1e-9f;
+    *out = rsqrtf(norm_sq);
 }
 
 template <typename scalar_t>
@@ -69,9 +68,12 @@ __global__ void thread_geometry_KV_d_pj__0_3d_fwd(
 
     // Depth Load
     const scalar_t* D_kv = D + ((b_idx * C + c_kv_idx) * P + p_idx) * 2;
-    scalar_t d1 = expf(min(D_kv[0] - D_kv[1], (scalar_t) MAX_LOG_DEPTH));
-    scalar_t d2 = expf(min(D_kv[0] + D_kv[1], (scalar_t) MAX_LOG_DEPTH));
-    scalar_t depths[2] = {d1, d2};
+    float logd = static_cast<float>(D_kv[0]);
+    float sig = static_cast<float>(D_kv[1]);
+
+    float d1 = expf(min(logd - sig, MAX_LOG_DEPTH));
+    float d2 = expf(min(logd + sig, MAX_LOG_DEPTH));
+    float depths[2] = {d1, d2};
 
     // Camera Load
     const scalar_t* c2w_kv_ptr = c2w + (b_idx * C + c_kv_idx) * 16;
@@ -80,11 +82,14 @@ __global__ void thread_geometry_KV_d_pj__0_3d_fwd(
     const scalar_t* P_q_ptr = P_mat + (b_idx * C + c_q_idx) * 16;
 
     // 0_3d
-    scalar_t p0_world[4] = {c2w_kv_ptr[3], c2w_kv_ptr[7], c2w_kv_ptr[11], 1.0f};
-    scalar_t p0_cam[4];
+    float p0_world[4] = {static_cast<float>(c2w_kv_ptr[3]),
+                         static_cast<float>(c2w_kv_ptr[7]),
+                         static_cast<float>(c2w_kv_ptr[11]),
+                         1.0f};
+    float p0_cam[4];
     matmul_4x4_4x1(w2c_q_ptr, p0_world, p0_cam);
-    scalar_t p0_norm_inv = 1 / max(p0_cam[3], 1e-4f);
-    scalar_t p0_3d[3] = {p0_cam[0] * p0_norm_inv, p0_cam[1] * p0_norm_inv, p0_cam[2] * p0_norm_inv};
+    float p0_norm_inv = 1 / max(p0_cam[3], 1e-4f);
+    float p0_3d[3] = {p0_cam[0] * p0_norm_inv, p0_cam[1] * p0_norm_inv, p0_cam[2] * p0_norm_inv};
 
     const float u_off[3] = {0.0f, 1.0f, 0.0f};
     const float v_off[3] = {0.0f, 0.0f, 1.0f};
@@ -97,33 +102,32 @@ __global__ void thread_geometry_KV_d_pj__0_3d_fwd(
         uint64_t out_base = (batch_offset + (uint64_t)c_q_idx * C * P + (uint64_t)c_kv_idx * P + p_idx) * 12;
         scalar_t* out = pos_KV + out_base;
 
-        out[0] = p0_3d[0];
-        out[1] = p0_3d[1];
-        out[2] = p0_3d[2];
+        out[0] = static_cast<scalar_t>(p0_3d[0]);
+        out[1] = static_cast<scalar_t>(p0_3d[1]);
+        out[2] = static_cast<scalar_t>(p0_3d[2]);
 
-        scalar_t disp = 1.0f / min(max(depths[d_i], (scalar_t)1e-2f), (scalar_t)MAX_DEPTH);
+        float disp = 1.0f / min(max(depths[d_i], 1e-2f), MAX_DEPTH);
 
         for (int r = 0; r < 3; ++r) {
-            scalar_t u = (px + u_off[r]) / (scalar_t)patches_x - 0.5f;
-            scalar_t v = (py + v_off[r]) / (scalar_t)patches_y - 0.5f;
+            float u = (px + u_off[r]) / static_cast<float>(patches_x) - 0.5f;
+            float v = (py + v_off[r]) / static_cast<float>(patches_y) - 0.5f;
             
-            scalar_t coords_4d[4] = {u, v, 1.0f, disp};
-            scalar_t pd_world[4], pd_cam[4];
+            float coords_4d[4] = {u, v, 1.0f, disp};
+            float pd_world[4], pd_cam[4];
             matmul_4x4_4x1(P_inv_kv_ptr, coords_4d, pd_world);
             matmul_4x4_4x1(P_q_ptr, pd_world, pd_cam);
 
             // pd_dir
-            scalar_t pd_norm_inv;
+            float pd_norm_inv;
             norm_inv_3(pd_cam, &pd_norm_inv);
-            out[3 + r * 2 + 0] = pd_cam[0] * pd_norm_inv;
-            out[3 + r * 2 + 1] = pd_cam[1] * pd_norm_inv;
+            out[3 + r * 2 + 0] = static_cast<scalar_t>(pd_cam[0] * pd_norm_inv);
+            out[3 + r * 2 + 1] = static_cast<scalar_t>(pd_cam[1] * pd_norm_inv);
 
             // pd_depth
-            scalar_t z = max(sqrtf(pd_cam[2] * pd_cam[2] + 1e-9f), 1e-4f);
-            scalar_t w = max(pd_cam[3], 1e-4f);
-            scalar_t pd_depth = z / w;
-            out[9 + r] = min(max(pd_depth, -(scalar_t)MAX_D_F), (scalar_t)MAX_D_F);
-            
+            float z = max(sqrtf(pd_cam[2] * pd_cam[2] + 1e-9f), 1e-4f);
+            float w = max(pd_cam[3], 1e-4f);
+            float pd_depth = z / w;
+            out[9 + r] = static_cast<scalar_t>(min(max(pd_depth, -MAX_D_F), MAX_D_F));
         }
     }
 }
@@ -163,88 +167,93 @@ __global__ void thread_geometry_KV_d_pj__0_3d_bwd(
 
     // Load Depths
     const scalar_t* D_kv = D + ((b_idx * C + c_kv_idx) * P + p_idx) * 2;
+    float logd = static_cast<float>(D_kv[0]);
+    float sig = static_cast<float>(D_kv[1]);
 
-    scalar_t d1 = expf(min(D_kv[0] - D_kv[1], (scalar_t) MAX_LOG_DEPTH));
-    scalar_t d2 = expf(min(D_kv[0] + D_kv[1], (scalar_t) MAX_LOG_DEPTH));
+    float d1 = expf(min(logd - sig, MAX_LOG_DEPTH));
+    float d2 = expf(min(logd + sig, MAX_LOG_DEPTH));
 
     // d(disp) / d(depth) 
-    scalar_t d_disp_dd1 = (d1 < 1e-2f || d1 > (scalar_t)MAX_DEPTH) ? 0.0f : (-1.0f / (d1 * d1));
-    scalar_t d_disp_dd2 = (d2 < 1e-2f || d2 > (scalar_t)MAX_DEPTH) ? 0.0f : (-1.0f / (d2 * d2));
+    float d_disp_dd1 = (d1 < 1e-2f || d1 > MAX_DEPTH) ? 0.0f : (-1.0f / (d1 * d1));
+    float d_disp_dd2 = (d2 < 1e-2f || d2 > MAX_DEPTH) ? 0.0f : (-1.0f / (d2 * d2));
 
-    scalar_t disp1 = 1.0f / min(max(d1, 1e-2f), (scalar_t)MAX_DEPTH);
-    scalar_t disp2 = 1.0f / min(max(d2, 1e-2f), (scalar_t)MAX_DEPTH);
+    float disp1 = 1.0f / min(max(d1, 1e-2f), MAX_DEPTH);
+    float disp2 = 1.0f / min(max(d2, 1e-2f), MAX_DEPTH);
 
     const scalar_t* P_inv_kv_ptr = P_inv + (b_idx * C + c_kv_idx) * 16;
     
     // 4st row of P_inv (multiplied by disp)
-    scalar_t P_inv_col3[4] = {
-        P_inv_kv_ptr[3], P_inv_kv_ptr[7], P_inv_kv_ptr[11], P_inv_kv_ptr[15]
+    float P_inv_col3[4] = {
+        static_cast<float>(P_inv_kv_ptr[3]), 
+        static_cast<float>(P_inv_kv_ptr[7]), 
+        static_cast<float>(P_inv_kv_ptr[11]), 
+        static_cast<float>(P_inv_kv_ptr[15])
     };
 
     const float u_off[3] = {0.0f, 1.0f, 0.0f};
     const float v_off[3] = {0.0f, 0.0f, 1.0f};
 
-    scalar_t v_d1 = 0.0f;
-    scalar_t v_d2 = 0.0f;
+    float v_d1 = 0.0f;
+    float v_d2 = 0.0f;
 
     // Loop all qury camera
     for (int c_q_idx = 0; c_q_idx < C; ++c_q_idx) {
         const scalar_t* P_q_ptr = P_mat + (b_idx * C + c_q_idx) * 16;
 
         // Jacobian: d(pd_cam) / d(disp) = P_q * P_inv_col3
-        scalar_t J_cam_disp[4];
+        float J_cam_disp[4];
         matmul_4x4_4x1(P_q_ptr, P_inv_col3, J_cam_disp);
 
         #pragma unroll
         for (int d_i = 0; d_i < 2; ++d_i) {
-            scalar_t disp = (d_i == 0) ? disp1 : disp2;
+            float disp = (d_i == 0) ? disp1 : disp2;
             
             uint64_t batch_offset = (uint64_t)(b_idx + d_i * B) * C * C * P;
             uint64_t out_base = (batch_offset + (uint64_t)c_q_idx * C * P + (uint64_t)c_kv_idx * P + p_idx) * 12;
             const scalar_t* v_out = v_pos_KV + out_base;
 
-            scalar_t v_disp = 0.0f;
+            float v_disp = 0.0f;
 
             for (int r = 0; r < 3; ++r) {
                 // Forward: compute pd_cam
-                scalar_t u = (px + u_off[r]) / (scalar_t)patches_x - 0.5f;
-                scalar_t v = (py + v_off[r]) / (scalar_t)patches_y - 0.5f;
-                scalar_t coords_4d[4] = {u, v, 1.0f, disp};
+                float u = (px + u_off[r]) / static_cast<float>(patches_x) - 0.5f;
+                float v = (py + v_off[r]) / static_cast<float>(patches_y) - 0.5f;
+                float coords_4d[4] = {u, v, 1.0f, disp};
                 
-                scalar_t pd_world[4], pd_cam[4];
+                float pd_world[4], pd_cam[4];
                 matmul_4x4_4x1(P_inv_kv_ptr, coords_4d, pd_world);
                 matmul_4x4_4x1(P_q_ptr, pd_world, pd_cam);
 
                 // output gradient
-                scalar_t v_out_x     = v_out[3 + r * 2 + 0];
-                scalar_t v_out_y     = v_out[3 + r * 2 + 1];
-                scalar_t v_out_depth = v_out[9 + r];
+                float v_out_x     = static_cast<float>(v_out[3 + r * 2 + 0]);
+                float v_out_y     = static_cast<float>(v_out[3 + r * 2 + 1]);
+                float v_out_depth = static_cast<float>(v_out[9 + r]);
 
                 // Chain Rul: z / w
-                scalar_t z_sq = pd_cam[2] * pd_cam[2] + 1e-9f;
-                scalar_t z = max(sqrtf(z_sq), 1e-4f);
-                scalar_t w = max(pd_cam[3], 1e-4f);
-                scalar_t pd_depth = z / w;
+                float z_sq = pd_cam[2] * pd_cam[2] + 1e-9f;
+                float z = max(sqrtf(z_sq), 1e-4f);
+                float w = max(pd_cam[3], 1e-4f);
+                float pd_depth = z / w;
 
-                v_out_depth = (pd_depth < -(scalar_t)MAX_D_F || pd_depth > (scalar_t)MAX_D_F) ? 0.0f : v_out_depth;
-                scalar_t v_z = (sqrtf(z_sq) > 1e-4f) ? (v_out_depth / w) : 0.0f;
-                scalar_t v_w = (pd_cam[3] > 1e-4f)   ? (-z * v_out_depth / (w * w)) : 0.0f;
+                v_out_depth = (pd_depth < -MAX_D_F || pd_depth > MAX_D_F) ? 0.0f : v_out_depth;
+                float v_z = (sqrtf(z_sq) > 1e-4f) ? (v_out_depth / w) : 0.0f;
+                float v_w = (pd_cam[3] > 1e-4f)   ? (-z * v_out_depth / (w * w)) : 0.0f;
 
-                scalar_t v_c3 = v_w;
-                scalar_t v_c2_depth = (sqrtf(z_sq) > 1e-4f) ? (v_z * pd_cam[2] / sqrtf(z_sq)) : 0.0f;
+                float v_c3 = v_w;
+                float v_c2_depth = (sqrtf(z_sq) > 1e-4f) ? (v_z * pd_cam[2] / sqrtf(z_sq)) : 0.0f;
 
                 // Chain Rule: c / norm
-                scalar_t pd_norm_inv;
+                float pd_norm_inv;
                 norm_inv_3(pd_cam, &pd_norm_inv);
 
-                scalar_t v_norm_inv = v_out_x * pd_cam[0] + v_out_y * pd_cam[1];
+                float v_norm_inv = v_out_x * pd_cam[0] + v_out_y * pd_cam[1];
 
                 // d(norm_inv)/dc = -c * (norm_inv)^3
-                scalar_t d_norm_inv_factor = -v_norm_inv * pd_norm_inv * pd_norm_inv * pd_norm_inv; 
+                float d_norm_inv_factor = -v_norm_inv * pd_norm_inv * pd_norm_inv * pd_norm_inv; 
 
-                scalar_t v_c0 = v_out_x * pd_norm_inv + d_norm_inv_factor * pd_cam[0];
-                scalar_t v_c1 = v_out_y * pd_norm_inv + d_norm_inv_factor * pd_cam[1];
-                scalar_t v_c2 = d_norm_inv_factor * pd_cam[2] + v_c2_depth;
+                float v_c0 = v_out_x * pd_norm_inv + d_norm_inv_factor * pd_cam[0];
+                float v_c1 = v_out_y * pd_norm_inv + d_norm_inv_factor * pd_cam[1];
+                float v_c2 = d_norm_inv_factor * pd_cam[2] + v_c2_depth;
 
                 // d(pd_cam)/ddisp
                 v_disp += v_c0 * J_cam_disp[0] + 
@@ -259,26 +268,26 @@ __global__ void thread_geometry_KV_d_pj__0_3d_bwd(
     }
 
     // Depths gradient
-    scalar_t v_logd = 0.0f;
-    scalar_t v_sig = 0.0f;
+    float v_logd = 0.0f;
+    float v_sig = 0.0f;
 
     // d(logd)/dd1
     // d(sig)/dd1
-    if (D_kv[0] - D_kv[1] <= (scalar_t)MAX_LOG_DEPTH) { 
+    if (logd - sig <= MAX_LOG_DEPTH) { 
         v_logd += v_d1 * d1;   
         v_sig  += v_d1 * d1 * (-1.0f);
     }
     
     // d(logd)/dd2
     // d(sig)/dd2
-    if (D_kv[0] + D_kv[1]  <= (scalar_t)MAX_LOG_DEPTH) {
+    if (logd + sig  <= MAX_LOG_DEPTH) {
         v_logd += v_d2 * d2;      
         v_sig  += v_d2 * d2 * (1.0f);
     }
 
     scalar_t* v_D_out = v_D + ((b_idx * C + c_kv_idx) * P + p_idx) * 2;
-    v_D_out[0] = v_logd;
-    v_D_out[1] = v_sig;
+    v_D_out[0] = static_cast<scalar_t>(v_logd);
+    v_D_out[1] = static_cast<scalar_t>(v_sig);
 }
 
 void geometry_KV_d_pj__0_3d_fwd(
@@ -314,7 +323,9 @@ void geometry_KV_d_pj__0_3d_fwd(
     dim3 grid((total_threads + threads.x - 1) / threads.x);
     int64_t shmem_size = 0;
 
-    AT_DISPATCH_FLOATING_TYPES(
+    AT_DISPATCH_FLOATING_TYPES_AND2(
+        at::ScalarType::Half, 
+        at::ScalarType::BFloat16,
         D.scalar_type(),
         "thread_geometry_KV_d_pj__0_3d_fwd",
         [&]() {
@@ -378,14 +389,16 @@ void geometry_KV_d_pj__0_3d_bwd(
     dim3 grid((total_threads + threads.x - 1) / threads.x);
     int64_t shmem_size = 0;
 
-    AT_DISPATCH_FLOATING_TYPES(
+    AT_DISPATCH_FLOATING_TYPES_AND2(
+        at::ScalarType::Half, 
+        at::ScalarType::BFloat16,
         D.scalar_type(),
         "thread_geometry_KV_d_pj__0_3d_bwd",
         [&]() {
             thread_geometry_KV_d_pj__0_3d_bwd<scalar_t>
                 <<<grid,
                    threads,
-                   shmem_size,
+                   shmem_size,  
                    at::cuda::getCurrentCUDAStream()>>>(
                     // inputs
                     B,
