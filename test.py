@@ -13,7 +13,7 @@ import torch
 import time
 from typing import Dict, Tuple
 
-# 경로 설정
+# File Path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
@@ -108,7 +108,7 @@ class RayRoPETester:
         bwd_cuda_time = self.measure_runtime(lambda: bwd_fn(out_cuda))
         bwd_cuda_mem = torch.cuda.max_memory_allocated() / 1024**2
 
-        # 결과 출력
+        # Print the result
         print(f"{'Pass':10} | {'PyTorch (Time/Mem)':^25} | {'CUDA (Time/Mem)':^25} | Speedup")
         print("-" * 80)
         print(f"Forward    | {fwd_ref_time:6.3f}ms / {fwd_ref_mem:6.1f}MB | {fwd_cuda_time:6.3f}ms / {fwd_cuda_mem:6.1f}MB | {fwd_ref_time/fwd_cuda_time:6.2f}x")
@@ -118,7 +118,7 @@ class RayRoPETester:
         print(f"\n{'='*20} Equivalence Test {'='*20}")
         q, k, v, pd = self.generate_inputs()
         
-        # 데이터 복사 (정밀한 비교를 위해)
+        # Data copy
         inputs_ref = [t.clone().detach().requires_grad_(True) for t in (q, k, v, pd)]
         inputs_cuda = [t.clone().detach().requires_grad_(True) for t in (q, k, v, pd)]
 
@@ -139,10 +139,74 @@ class RayRoPETester:
         for i, name in enumerate(names):
             diff = (inputs_ref[i].grad - inputs_cuda[i].grad).abs().max().item()
             print(f"{name:8}: {diff:.6e}")
+            
+    def run_fallback_test(self):
+        print(f"\n{'='*20} Fallback (2D RoPE) Equivalence Test {'='*20}")
+        
+        c = self.config
+        seqlen = c['num_cameras'] * c['patches_x'] * c['patches_y']
+        
+        feats_ref = torch.randn(c['batch'], c['num_heads'], seqlen, c['head_dim'], 
+                                device=self.device, dtype=self.dtype, requires_grad=True)
+        feats_cuda = feats_ref.clone().detach().requires_grad_(True)
+        
+        def rope2d_python_reference(feats):
+            half_D = feats.shape[-1] // 2
+            num_freqs = half_D // 2
+            
+            l_min_x, l_min_y = self.cuda_model.log_min_freqs_2d.float()
+            l_max_x, l_max_y = self.cuda_model.log_max_freqs_2d.float()
+            
+            freqs_x = torch.exp(torch.linspace(l_min_x, l_max_x, num_freqs, device=self.device))
+            freqs_y = torch.exp(torch.linspace(l_min_y, l_max_y, num_freqs, device=self.device))
+            
+            p_idx = torch.arange(seqlen, device=self.device) % (c['patches_x'] * c['patches_y'])
+            pos_x = (p_idx % c['patches_x']).float()
+            pos_y = (p_idx // c['patches_x']).float()
+            
+            angles_x = pos_x[:, None] * freqs_x[None, :]
+            angles_y = pos_y[:, None] * freqs_y[None, :]
+            
+            angles = torch.stack([angles_x, angles_y], dim=-1).view(seqlen, -1)
+            
+            cos_val = torch.cos(angles).unsqueeze(0).unsqueeze(0)
+            sin_val = torch.sin(angles).unsqueeze(0).unsqueeze(0)
+            
+            x1, x2 = feats.chunk(2, dim=-1)
+            out_x1 = x1 * cos_val - x2 * sin_val
+            out_x2 = x1 * sin_val + x2 * cos_val
+            
+            return torch.cat([out_x1, out_x2], dim=-1).to(self.dtype)
+
+        out_ref = rope2d_python_reference(feats_ref)
+        
+        apply_fn_q, _, _ = self.cuda_model._prepare_apply_fns_rope()
+        out_cuda = apply_fn_q(feats_cuda)
+        
+        fwd_diff = (out_ref - out_cuda).abs().max().item()
+        print(f"Fallback Forward Max Diff  : {fwd_diff:.6e}")
+        
+        grad_out = torch.randn_like(out_ref)
+        out_ref.backward(grad_out)
+        out_cuda.backward(grad_out)
+        
+        bwd_diff = (feats_ref.grad - feats_cuda.grad).abs().max().item()
+        print(f"Fallback Backward Max Diff : {bwd_diff:.6e}")
+        
+        print("\n--- Full Attention Fallback Test ---")
+        self.cuda_model.w2cs = None
+        self.cuda_model.P = None
+        
+        q, k, v, pd = self.generate_inputs(requires_grad=False)
+        try:
+            attn_out = self.cuda_model(q, k, v, predicted_d=None)
+            print(f"Attention Fallback Success! Output shape: {attn_out.shape}")
+        except Exception as e:
+            print(f"Attention Fallback Failed: {e}")
 
 if __name__ == "__main__":    
     device = "cuda"
-    dtype = torch.bfloat16 # torch.float32
+    dtype = torch.float32 # torch.bfloat16
     
     config = {
         "batch": 4,
@@ -164,3 +228,4 @@ if __name__ == "__main__":
     tester = RayRoPETester(config, device, dtype)
     tester.run_equivalence_test()
     tester.run_benchmark()
+    tester.run_fallback_test()

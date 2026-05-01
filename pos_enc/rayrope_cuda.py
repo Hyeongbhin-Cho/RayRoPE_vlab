@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from typing import Callable, Optional, List
 
 # 사용자가 작성한 CUDA 익스텐션들
-from cuda import FusedRayRoPEFunction, FusedGeometry_KV
+from cuda import FusedRayRoPEFunction, FusedGeometry_KV, RoPE2DFunction
 # import time
 
 MAX_DEPTH = 100.0
@@ -60,6 +60,26 @@ class RayRoPE_DotProductAttention_CUDA(torch.nn.Module):
         self.register_buffer("log_min_freqs", log_min)
         self.register_buffer("log_max_freqs", log_max)
         
+        # ==========================================
+        # 2D Fallback용 주파수 대역 계산 및 등록 추가
+        # ==========================================
+        # 2D는 X, Y 2개 축(coord_dim=2)을 사용하므로, 
+        # 한 축당 할당되는 주파수 개수는 (head_dim // 2) // 2 입니다.
+        num_freqs_2d = (self.head_dim // 2) // 2
+        
+        # PRoPE의 2D 기본 설정값 (필요시 __init__ 인자로 빼셔도 됩니다)
+        freq_scale_2d = 1.0 
+        freq_base_2d = 100.0 
+
+        # PRoPE의 주파수 공식: freq = freq_scale * (freq_base ** (-i / num_freqs))
+        # 이를 log 스케일의 min/max로 변환합니다.
+        l_max_2d = math.log(freq_scale_2d)
+        l_min_2d = math.log(freq_scale_2d) - math.log(freq_base_2d) * ((num_freqs_2d - 1) / num_freqs_2d)
+
+        # X축과 Y축 모두 동일한 주파수 대역을 사용하므로 [l_min, l_min] 형태의 크기 2짜리 텐서를 만듭니다.
+        self.register_buffer("log_min_freqs_2d", torch.tensor([l_min_2d, l_min_2d], dtype=torch.float32))
+        self.register_buffer("log_max_freqs_2d", torch.tensor([l_max_2d, l_max_2d], dtype=torch.float32))
+        
     def parse_pos_enc_type(self, pos_enc_type: str):
         self.use_p0 = False
         self.p0_type = 'none'
@@ -100,7 +120,10 @@ class RayRoPE_DotProductAttention_CUDA(torch.nn.Module):
         start_time = time.perf_counter()"""
         # ========================================
         
-        apply_fn_q, all_apply_fns_kv, apply_fn_o = self._prepare_apply_fns(predicted_d)
+        if self.w2cs is None or self.P is None:
+            apply_fn_q, all_apply_fns_kv, apply_fn_o = self._prepare_apply_fns_rope()
+        else :
+            apply_fn_q, all_apply_fns_kv, apply_fn_o = self._prepare_apply_fns(predicted_d)
         
         # ========================================
         """torch.cuda.synchronize()
@@ -182,6 +205,9 @@ class RayRoPE_DotProductAttention_CUDA(torch.nn.Module):
 
         self.w2cs = w2cs.contiguous()
         self.c2ws = _invert_SE3(w2cs).contiguous()
+        
+        if Ks is None:
+            return
         Ks_norm = normalize_K(Ks, self.image_width, self.image_height)
 
         self.P = torch.einsum("...ij,...jk->...ik", _lift_K(Ks_norm), self.w2cs).contiguous()
@@ -211,6 +237,14 @@ class RayRoPE_DotProductAttention_CUDA(torch.nn.Module):
             apply_fn_kv = lambda x, p=pos_KV_q: FusedRayRoPEFunction.apply(x, p, self.log_min_freqs, self.log_max_freqs, True)
             all_apply_fns_kv.append(apply_fn_kv)
 
+        return apply_fn_q, all_apply_fns_kv, apply_fn_o
+    
+    def _prepare_apply_fns_rope(self) -> tuple:
+        apply_fn_q = lambda x : RoPE2DFunction.apply(self.patches_x, self.patches_y, x, self.log_min_freqs_2d, self.log_max_freqs_2d)
+        
+        all_apply_fns_kv = [apply_fn_q for _ in range(self.num_cameras)]
+        apply_fn_o = lambda x : x
+        
         return apply_fn_q, all_apply_fns_kv, apply_fn_o
 
     def rayrope_dot_product_attention(

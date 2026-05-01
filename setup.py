@@ -11,6 +11,7 @@ csrc_dir = os.path.join(os.path.dirname(__file__), 'cuda', 'csrc')
 source_files = [
     os.path.join(csrc_dir, 'bindings.cpp'),
     os.path.join(csrc_dir, 'rayrope_coeffs.cu'),
+    os.path.join(csrc_dir, 'rope2D_coeffs.cu')
 ]
 
 setup(

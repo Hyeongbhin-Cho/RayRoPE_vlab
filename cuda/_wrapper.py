@@ -3,7 +3,8 @@ import torch
 from torch import Tensor
 from torch.autograd import Function
 
-from rayrope_cuda_ext import fused_rayrope_coeffs_fwd, fused_rayrope_coeffs_bwd
+from rayrope_cuda_ext import (fused_rayrope_coeffs_fwd, fused_rayrope_coeffs_bwd,
+                              rope2D_coeffs_fwd, rope2D_coeffs_bwd)
 from .cuda_manager import GeometryKernelManager
 
 
@@ -17,12 +18,7 @@ class FusedRayRoPEFunction(Function):
                 # freqs: Tensor,
                 # interleaved: bool = False,
                 inverse: bool = False):
-        """
-        feats: (batch, num_heads, seqlen, feat_dim)
-        positions: (batch, num_cameras, num_patches, coord_dim)
-        freqs: (num_freqs,)
-        """        
-        out = torch.empty_like(feats, memory_format=torch.contiguous_format)
+        out = torch.empty_like(feats)
         fused_rayrope_coeffs_fwd(
             # inputs
             feats.contiguous(),
@@ -33,7 +29,7 @@ class FusedRayRoPEFunction(Function):
             # interleaved,
             inverse,
             # output
-            out)
+            out.contiguous())
         
         ctx.save_for_backward(feats, positions, log_min_freqs, log_max_freqs)
         # ctx.interleaved = interleaved
@@ -47,8 +43,8 @@ class FusedRayRoPEFunction(Function):
         # interleaved = ctx.interleaved
         inverse = ctx.inverse
 
-        v_feats = torch.empty_like(feats, memory_format=torch.contiguous_format)
-        v_positions = torch.empty_like(positions, memory_format=torch.contiguous_format)
+        v_feats = torch.empty_like(feats)
+        v_positions = torch.empty_like(positions)
         
         fused_rayrope_coeffs_bwd(
             # intputs
@@ -63,8 +59,8 @@ class FusedRayRoPEFunction(Function):
             # grad_output
             v_out.contiguous(),
             # grad_inputs
-            v_feats,
-            v_positions
+            v_feats.contiguous(),
+            v_positions.contiguous()
         )
     
         return v_feats, v_positions, None, None, None
@@ -121,7 +117,7 @@ class FusedGeometry_KV(Function):
         
         cuda_module = GeometryKernelManager.get_kernel(pos_enc_type)
         
-        v_predicted_d = torch.empty_like(predicted_d, memory_format=torch.contiguous_format)
+        v_predicted_d = torch.empty_like(predicted_d)
         
         cuda_module.backward(
             # inputs
@@ -141,4 +137,54 @@ class FusedGeometry_KV(Function):
         v_predicted_d = v_predicted_d.view(ctx.d_shape)
         
         return None,None, None, None, None, None, None, v_predicted_d, None, None, None, None
-
+    
+class RoPE2DFunction(Function):
+    @staticmethod
+    def forward(ctx,
+                patches_x, patches_y,
+                feats: Tensor,
+                log_min_freqs: Tensor,
+                log_max_freqs: Tensor):
+        out = torch.empty_like(feats)
+    
+        rope2D_coeffs_fwd(
+            #inputs
+            patches_x, patches_y,
+            feats.contiguous(),
+            log_min_freqs.contiguous(),
+            log_max_freqs.contiguous(),
+            # ouput
+            out.contiguous())
+        
+        ctx.save_for_backward(log_min_freqs, log_max_freqs)
+        ctx.f_shape = feats.shape
+        ctx.f_device = feats.device
+        ctx.f_dtype = feats.dtype
+        ctx.patches_x = patches_x
+        ctx.patches_y = patches_y
+        
+        return out
+        
+    def backward(ctx, v_out: Tensor):
+        log_min_freqs, log_max_freqs = ctx.saved_tensors
+        f_shape = ctx.f_shape
+        f_device = ctx.f_device
+        f_dtype = ctx.f_dtype
+        patches_x = ctx.patches_x
+        patches_y = ctx.patches_y
+        
+        v_feats = torch.empty(f_shape, device=f_device, dtype=f_dtype)
+        
+        rope2D_coeffs_bwd(
+            # inputs
+            patches_x, patches_y,
+            log_min_freqs.contiguous(),
+            log_max_freqs.contiguous(),
+            # output
+            # grad_output
+            v_out.contiguous(),
+            # grad_inputs
+            v_feats.contiguous()
+        )
+        
+        return None, None, v_feats, None, None

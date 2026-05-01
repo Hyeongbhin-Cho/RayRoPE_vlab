@@ -13,8 +13,8 @@ namespace rayrope {
  positions: (batch, num_cameras, num_patches, coord_dim)
  log_min_freqs: (coord_dim,)
  log_max_freqs: (coord_dim,)
- freqs: (num_freqs,)
- interleaved: bool
+ // freqs: (num_freqs,)
+ // interleaved: bool
  inverse: bool
 // output
  out: (batch, num_heads, seqlen, feat_dim)
@@ -37,10 +37,10 @@ void fused_rayrope_coeffs_fwd(
 // inputs
  feats: (batch, num_heads, seqlen, feat_dim)
  positions: (batch, num_cameras, num_patches, coord_dim)
-log_min_freqs: (coord_dim,)
+ log_min_freqs: (coord_dim,)
  log_max_freqs: (coord_dim,)
- freqs: (num_freqs,)
- interleaved: bool
+ // freqs: (num_freqs,)
+ // interleaved: bool
  inverse: bool
 // output
 // grad_output
@@ -64,6 +64,54 @@ void fused_rayrope_coeffs_bwd(
     // grad_inputs
     at::Tensor& v_feats,     // (B, H, N, feat_dim)
     at::Tensor& v_positions //  (B, C, P, coord_dim) = (B, N, coord_dim)
+);
+
+// -----------------------------------------------------------
+/* rope2D_coeffs_fwd
+// inputs
+ patches_x: int
+ patches_y: int
+ feats: (batch, num_heads, seqlen, feat_dim)
+ log_min_freqs: (coord_dim,)
+ log_max_freqs: (coord_dim,)
+// output
+ out: (batch, num_heads, seqlen, feat_dim)
+*/
+void rope2D_coeffs_fwd(
+    // inputs
+    const uint32_t patches_x,
+    const uint32_t patches_y,
+    const at::Tensor& feats,     // (B, H, N, feat_dim)
+    const at::Tensor& log_min_freqs, // (coord_dim)
+    const at::Tensor& log_max_freqs, // (coord_dim)
+    // output
+    at::Tensor& out       // (B, H, N, feat_dim)
+);
+
+// -----------------------------------------------------------
+/* rope2D_coeffs_bwd
+// inputs
+ patches_x: int
+ patches_y: int
+ log_min_freqs: (coord_dim,)
+ log_max_freqs: (coord_dim,)
+// output
+// grad_output
+ v_out: (batch, num_heads, seqlen, feat_dim)
+// grad_input
+ v_feats: (batch, num_heads, seqlen, feat_dim)
+*/
+void rope2D_coeffs_bwd(
+    // inputs
+    const uint32_t patches_x,
+    const uint32_t patches_y,
+    const at::Tensor& log_min_freqs, // (coord_dim)
+    const at::Tensor& log_max_freqs, // (coord_dim)
+    // output
+    // grad_ouput
+    const at::Tensor& v_out,// (B, H, N, feat_dim)
+    // grad_inputs
+    at::Tensor& v_feats     // (B, H, N, feat_dim)
 );
 
 } // namespace rayrope

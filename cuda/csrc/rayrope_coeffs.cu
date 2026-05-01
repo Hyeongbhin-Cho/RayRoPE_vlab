@@ -1,4 +1,4 @@
-// cuda/csrc/rayrope.h
+// cuda/csrc/rayrope_coeffs.cu
 // Torch
 #include <torch/extension.h>
 #include <ATen/cuda/CUDAContext.h>
